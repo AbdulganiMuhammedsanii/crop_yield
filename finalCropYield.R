@@ -1051,7 +1051,7 @@ model_df_complete <- model_df_complete |>
     county_id = interaction(state, county, drop = TRUE)
   )
 
-model_df_complete
+model_df_complete$county_id
 
 #simplest linear regression model
 lm_baseline <- lm(
@@ -1245,97 +1245,6 @@ nrow(county_baseline) == n_distinct(model_df_complete$state, model_df_complete$c
 
 #county baselines -> ex ante
 #baseline adj target
-df_forecast <- model_df_complete |>
-  left_join(county_baseline, by = c("state", "county")) |>
-  mutate(
-    yield_adj = yield - mean_yield
-  )
+model_df_with_baseline
 
-df_early <- df_forecast |>
-  select(
-    state, county, year, yield_adj,
-    precip_sum_early,
-    tmax_mean_early,
-    ndvi_early,
-    evi_early
-  )
-
-df_veg <- df_forecast |>
-  select(
-    state, county, year, yield_adj,
-    precip_sum_early, precip_sum_veg,
-    tmax_mean_early, tmax_mean_veg,
-    ndvi_early, ndvi_veg,
-    evi_early, evi_veg
-  )
-
-df_flower <- df_forecast |>
-  select(
-    state, county, year, yield_adj,
-    precip_sum_early, precip_sum_veg, precip_sum_flower,
-    tmax_mean_early, tmax_mean_veg, tmax_mean_flower,
-    ndvi_early, ndvi_veg, ndvi_flower,
-    evi_early, evi_veg, evi_flower
-  )
-
-df_fill <- df_forecast |>
-  select(
-    state, county, year, yield_adj,
-    precip_sum_early, precip_sum_veg, precip_sum_flower, precip_sum_fill,
-    tmax_mean_early, tmax_mean_veg, tmax_mean_flower, tmax_mean_fill,
-    ndvi_early, ndvi_veg, ndvi_flower, ndvi_fill,
-    evi_early, evi_veg, evi_flower, evi_fill
-  )
-
-#purely forward looking and no leakage
-lm_flower_fc <- lm(
-  yield_adj ~
-    ndvi_flower +
-    tmax_mean_flower +
-    precip_sum_flower +
-    ndvi_veg +
-    precip_sum_veg,
-  data = df_flower
-)
-
-summary(lm_flower_fc)
-
-train <- df_flower |> filter(year <= 2016)
-test  <- df_flower |> filter(year > 2016)
-
-fit <- lm(
-  yield_adj ~ ndvi_flower + tmax_mean_flower + precip_sum_flower,
-  data = train
-)
-
-test$pred <- predict(fit, newdata = test)
-
-cor(test$pred, test$yield_adj)
-sqrt(mean((test$pred - test$yield_adj)^2))
-
-test
-county_pred <- test |>
-  left_join(county_baseline, by = c("state", "county")) |>
-  mutate(
-    yield_pred = mean_yield + pred
-  )
-county_pred
-
-
-#use actual national numbers later on : extension
-national_actual <- model_df_complete |>
-  group_by(year) |>
-  summarise(
-    us_yield_actual = mean(yield, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-national_pred <- county_pred |>
-  group_by(year) |>
-  summarise(
-    us_yield_pred = mean(yield_pred, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-
-
+write_csv(model_df_with_baseline, "final_model_df")
