@@ -1,38 +1,47 @@
 import ee
+
 ee.Authenticate()
 ee.Initialize(project='kansascrops')
 
-# -----------------------
-# Load county boundaries
-# -----------------------
+# -----------------------------
+# Load US counties
+# -----------------------------
 counties = ee.FeatureCollection("TIGER/2018/Counties")
 
-target_counties = [
-    'Sherman','Cheyenne','Thomas','Wallace','Logan','Gove','Trego','Scott','Wichita','Greeley',
-    'Hamilton','Kearny','Finney','Gray','Ford','Hodgeman','Ness','Stanton','Morton','Stevens',
-    'Barton','Ellis','Rush','Russell','Rice','Reno','McPherson','Saline','Stafford','Pawnee',
-    'Douglas','Franklin','Miami','Johnson','Brown','Atchison','Doniphan'
-]
+target = ee.FeatureCollection(
+    "projects/kansascrops/assets/county_coords_required"
+)
 
-kansas = counties \
-    .filter(ee.Filter.eq('STATEFP', '20')) \
-    .filter(ee.Filter.inList('NAME', target_counties))
+joined = ee.Join.inner().apply(
+    counties,
+    target,
+    ee.Filter.And(
+        ee.Filter.equals(leftField='STATEFP', rightField='statefp'),
+        ee.Filter.equals(leftField='NAME', rightField='county')
+    )
+)
 
-# -----------------------
-# Load MODIS EVI
-# -----------------------
+core_counties = ee.FeatureCollection(
+    joined.map(lambda f: ee.Feature(f.get('primary')))
+)
+
+print("Number of counties:", core_counties.size().getInfo())
+
+# -----------------------------
+# MODIS EVI
+# -----------------------------
 modis = (
     ee.ImageCollection("MODIS/061/MOD13Q1")
-      .select('EVI')   # <-- CHANGE NDVI → EVI
+      .select('EVI')
       .map(lambda img:
            img.multiply(0.0001)
               .copyProperties(img, ['system:time_start'])
       )
 )
 
-# -----------------------
+# -----------------------------
 # Growth stages
-# -----------------------
+# -----------------------------
 stages = {
     'early':  (4, 5),
     'veg':    (6, 6),
@@ -41,18 +50,17 @@ stages = {
     'late':   (9, 9)
 }
 
-# -----------------------
-# EXPORT LOOP
-# -----------------------
+# -----------------------------
+# Loop over years
+# -----------------------------
 for year in range(2001, 2025):
-    print(f"Creating EVI export task for {year}")
+    print(f"Creating EVI export for {year}")
 
     yearly = modis.filterDate(f'{year}-01-01', f'{year}-12-31')
 
-    feature_list = []
+    stage_features = []
 
     for stage, (m1, m2) in stages.items():
-
         stage_img = (
             yearly
             .filter(ee.Filter.calendarRange(m1, m2, 'month'))
@@ -61,27 +69,29 @@ for year in range(2001, 2025):
         )
 
         reduced = stage_img.reduceRegions(
-            collection=kansas,
+            collection=core_counties,
             reducer=ee.Reducer.mean(),
             scale=250
         )
 
-        reduced = reduced.map(lambda f:
-            f.set('year', year)
-             .set('stage', stage)
+        reduced = reduced.map(
+            lambda f: f.set({
+                'year': year,
+                'stage': stage
+            })
         )
 
-        feature_list.append(reduced)
+        stage_features.append(reduced)
 
-    merged = ee.FeatureCollection(feature_list).flatten()
+    merged = ee.FeatureCollection(stage_features).flatten()
 
-    # EXPORT to Drive
     task = ee.batch.Export.table.toDrive(
         collection=merged,
-        description=f"EVI_Kansas_{year}",
-        folder="EVI_Kansas",
+        description=f"EVI_CoreCounties_{year}",
+        folder="EVI_CoreCounties",
         fileFormat="CSV"
     )
+
     task.start()
 
-print("All EVI export tasks created. Monitor in Earth Engine Task Manager.")
+print("All EVI export tasks submitted.")
